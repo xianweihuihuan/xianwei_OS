@@ -65,9 +65,10 @@ section MBR vstart=0x7c00
   mov bx,LOADER_BASE_ADDR
   mov cx,4
   call rd_disk_m_16
-
+  ;跳入loader入口
   jmp LOADER_BASE_ADDR + 0x300
 
+;利用端口16位读取硬盘函数
 rd_disk_m_16:
   
   ;对参数进行备份，因为eax和cx的值在下面会被更改
