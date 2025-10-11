@@ -37,7 +37,7 @@ loader_start:
   xor ebx, ebx               ; EBX=0，第一次调用
   mov edx, 0x534d4150        ; E820签名
   mov di, ards_buf           ; 缓冲区地址
-
+;利用BIOS中断获取物理内存总量
 .e280_mem_get_lopp:
   mov ecx, 20                ; 结构体长度
   int 0x15                   ; 调用BIOS获取内存
@@ -110,8 +110,9 @@ loader_start:
   or eax, 0x00000001
   mov cr0, eax
 
-  jmp dword SELECTOR_CODE : p_mode_start
+  jmp dword SELECTOR_CODE : p_mode_start;进入32位保护模式，重新加载流水线
 
+;获取物理内存总量失败，CPU停止
 .error_hlt:
   hlt
 
@@ -154,6 +155,7 @@ enter_kernel:
   jmp KERNEL_ENTRY_POINT
 
 ; ---------------- kernel_init: 拷贝内核段 ----------------
+;解析内核文件的elf header和pragrom header ，载入内核
 kernel_init:
   xor eax, eax
   xor ebx, ebx
