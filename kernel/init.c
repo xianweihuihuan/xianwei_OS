@@ -7,6 +7,10 @@
 #include "console.h"
 #include "keyboard.h"
 #include "tss.h"
+#include "syscall-init.h"
+#include "ide.h"
+#include "fs.h"
+
 //进行必要的初始化
 void init_all() {
   put_str("init all\n");
@@ -17,5 +21,8 @@ void init_all() {
   console_init();
   keyboard_init();
   tss_init();
+  syscall_init();
+  ide_init();
+  filesys_init();
   put_str("init all done\n");
 }
