@@ -94,6 +94,7 @@
 #define EFLAGS_IOPL_0 (0 << 12)
 #define DIV_ROUND_UP(X, STEP) ((X + STEP - 1) / STEP)
 
+#define UNUSED __attribute__((unused))
 struct gdt_desc {
   uint16_t limit_low_word;
   uint16_t base_low_word;
