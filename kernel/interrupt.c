@@ -11,7 +11,10 @@
 #define PIC_S_CTRL 0xa0
 #define PIC_S_DATA 0xa1
 
-#define IDT_DESC_CNT 0x30
+#define IDT_DESC_CNT 0x81
+
+extern uint32_t syscall_handler();
+
 // eflags寄存器的IF位为1
 #define EFLAGS_IF 0x00000200
 // 获取eflags寄存器的内容
@@ -57,8 +60,8 @@ static void pic_init() {
   outb(PIC_S_DATA, 0x01);
 
   //测试
-  outb(PIC_M_DATA, 0xfc);
-  outb(PIC_S_DATA, 0xff);
+  outb(PIC_M_DATA, 0xf8);
+  outb(PIC_S_DATA, 0xbf);
   put_str("    pic_init done\n");
 }
 
@@ -74,9 +77,11 @@ static void make_idt_desc(struct gate_desc* p_gdesc,
 
 // 中断描述符表初始化
 void idt_desc_init() {
+  int lastindex = IDT_DESC_CNT - 1;
   for (int i = 0; i < IDT_DESC_CNT; ++i) {
     make_idt_desc(&idt[i], IDT_DESC_ATTR_DPL0, intr_entry_table[i]);
   }
+  make_idt_desc(&idt[lastindex], IDT_DESC_ATTR_DPL3, syscall_handler);
   put_str("    idt_desc_init done\n");
 }
 
