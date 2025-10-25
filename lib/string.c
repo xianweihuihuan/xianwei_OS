@@ -50,7 +50,7 @@ uint32_t strlen(const char* str) {
   const char* p = str;
   while (*p++)
     ;
-  return p - str + 1;
+  return p - str - 1;
 }
 
 int8_t strcmp(const char* a, const char* b) {
