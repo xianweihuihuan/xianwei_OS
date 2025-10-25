@@ -7,6 +7,7 @@
 #include "print.h"
 #include "process.h"
 #include "print.h"
+#include "sync.h"
 
 #define PG_SIZE 4096
 
@@ -14,8 +15,18 @@ struct task_struct* main_thread;
 struct list thread_ready_list;
 struct list thread_all_list;
 static struct list_elem* thread_tag;
+struct lock pid_lock;
+struct task_struct* idle_thread;
 
 extern void switch_to(struct task_struct* cur, struct task_struct* next);
+
+static pid_t allocate_pid(){
+  static pid_t next_pid = 0;
+  lock_acquire(&pid_lock);
+  next_pid++;
+  lock_release(&pid_lock);
+  return next_pid;
+}
 
 struct task_struct* running_thread() {
   uint32_t esp;
@@ -46,6 +57,7 @@ void thread_create(struct task_struct* pthread,
 
 void init_thread(struct task_struct* pthread, char* name, int prio) {
   memset(pthread, 0, sizeof(*pthread));
+  pthread->pid = allocate_pid();
   strcpy(pthread->name, name);
   if (pthread == main_thread) {
     pthread->status = TASK_RUNNING;
@@ -57,6 +69,14 @@ void init_thread(struct task_struct* pthread, char* name, int prio) {
   pthread->ticks = prio;
   pthread->elapsed_ticks = 0;
   pthread->pgdir = NULL;
+  pthread->fd_table[0] = 0;
+  pthread->fd_table[1] = 1;
+  pthread->fd_table[2] = 2;
+  uint8_t fd_index = 3;
+  while(fd_index < MAX_FILES_OPEN_PER_PROC){
+    pthread->fd_table[fd_index] = -1;
+    fd_index++;
+  }
   pthread->stack_magic = 0x13421342;
 }
 
@@ -81,6 +101,23 @@ static void make_main_thread() {
   list_append(&thread_all_list, &main_thread->all_list_tag);
 }
 
+void thread_yield(){
+  struct task_struct* cur = running_thread();
+  enum intr_status old_status = intr_disable();
+  ASSERT(!(elem_find(&thread_ready_list, &cur->general_tag)));
+  cur->status = TASK_READY;
+  list_append(&thread_ready_list, &cur->general_tag);
+  schedule();
+  intr_set_status(old_status);
+}
+
+static void idle(void* arg){
+  while(1){
+    thread_block(TASK_BLOCKED);
+    asm volatile("sti;hlt" ::: "memory");
+  }
+}
+
 void schedule(){
   ASSERT(intr_get_status() == INTR_OFF)
   struct task_struct* cur = running_thread();
@@ -92,7 +129,9 @@ void schedule(){
   }else{
 
   }
-  ASSERT(!list_empty(&thread_ready_list));
+  if(list_empty(&thread_ready_list)){
+    thread_unblock(idle_thread);
+  }
   thread_tag = NULL;
   thread_tag = list_pop(&thread_ready_list);
   struct task_struct* next =
@@ -106,7 +145,9 @@ void thread_init(){
   put_str("  thread_init start\n");
   list_init(&thread_all_list);
   list_init(&thread_ready_list);
+  lock_init(&pid_lock);
   make_main_thread();
+  idle_thread = thread_start("idle", 10, idle,NULL);
   put_str("  thread_init_done\n");
 }
 

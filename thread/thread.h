@@ -5,7 +5,9 @@
 #include "bitmap.h"
 #include "../kernel/memory.h"
 
+#define MAX_FILES_OPEN_PER_PROC 8
 typedef void thread_func(void*);
+typedef int16_t pid_t;
 
 enum task_status {
   TASK_RUNNING,
@@ -53,17 +55,21 @@ struct thread_stack {
   void* func_arg;
 };
 
+
 struct task_struct {
   uint32_t* self_kstack;
+  pid_t pid;
   enum task_status status;
   uint8_t priority;
   char name[16];
   uint8_t ticks;
   uint8_t elapsed_ticks;
+  uint32_t fd_table[MAX_FILES_OPEN_PER_PROC];
   struct list_elem general_tag;
   struct list_elem all_list_tag;
   uint32_t* pgdir;
   struct virtual_addr userprog_vaddr;
+  struct mem_block_desc u_block_desc[DESC_CNT];
   uint32_t stack_magic;
 };
 extern struct list thread_ready_list;
@@ -82,4 +88,5 @@ void thread_init();
 static void make_main_thread();
 void thread_block(enum task_status stat);
 void thread_unblock(struct task_struct* pthread);
+void thread_yield();
 #endif
