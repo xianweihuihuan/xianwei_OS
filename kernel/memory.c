@@ -1,5 +1,6 @@
 #include "memory.h"
 #include "debug.h"
+#include "interrupt.h"
 #include "print.h"
 #include "stdint.h"
 #include "string.h"
@@ -22,6 +23,14 @@ struct virtual_addr kernel_vaddr;
 
 #define PDE_INDEX(addr) ((addr & 0xffc00000) >> 22)
 #define PTE_INDEX(addr) ((addr & 0x003ff000) >> 12)
+
+struct arena {
+  struct mem_block_desc* desc;
+  uint32_t cnt;
+  bool large;
+};
+
+struct mem_block_desc k_block_descs[DESC_CNT];
 
 // 初始化内存池
 static void mem_pool_init(uint32_t all_mem) {
@@ -201,7 +210,7 @@ void* get_a_page(enum pool_flags pf, uint32_t vaddr) {
         "by get_a_page");
   }
   void* page_phyaddr = palloc(mem_pool);
-  if(page_phyaddr == NULL){
+  if (page_phyaddr == NULL) {
     return NULL;
   }
   page_table_add((void*)vaddr, page_phyaddr);
@@ -209,7 +218,7 @@ void* get_a_page(enum pool_flags pf, uint32_t vaddr) {
   return (void*)vaddr;
 }
 
-uint32_t addr_v2p(uint32_t vaddr){
+uint32_t addr_v2p(uint32_t vaddr) {
   uint32_t* pte = pte_ptr(vaddr);
   return ((*pte & 0xfffff000) + (vaddr & 0x00000fff));
 }
@@ -221,5 +230,202 @@ void mem_init() {
   mem_pool_init(mem_bytes_total);
   lock_init(&user_pool.lock);
   lock_init(&kernel_pool.lock);
+  block_desc_init(k_block_descs);
   put_str("  mem_init done\n");
+}
+
+void block_desc_init(struct mem_block_desc* desc_array) {
+  uint32_t block_size = 16;
+  for (int i = 0; i < DESC_CNT; ++i) {
+    desc_array[i].block_size = block_size;
+    desc_array[i].blocks_per_arena =
+        (PG_SIZE - sizeof(struct arena)) / block_size;
+    list_init(&desc_array[i].free_list);
+    block_size *= 2;
+  }
+}
+
+static struct mem_block* arena2block(struct arena* a, uint32_t idx) {
+  return (struct mem_block*)((uint32_t)a + sizeof(struct arena) +
+                             idx * a->desc->block_size);
+}
+
+static struct arena* block2arena(struct mem_block* b) {
+  return (struct arena*)((uint32_t)b & 0xfffff000);
+}
+
+void* sys_malloc(uint32_t size) {
+  enum pool_flags PF;
+  struct pool* mem_pool;
+  struct mem_block_desc* desc;
+  uint32_t pool_size;
+  struct task_struct* cur = running_thread();
+  if (cur->pgdir != NULL) {
+    PF = PF_USER;
+    pool_size = user_pool.phy_size;
+    mem_pool = &user_pool;
+    desc = cur->u_block_desc;
+  } else {
+    PF = PF_KERNEL;
+    pool_size = kernel_pool.phy_size;
+    mem_pool = &kernel_pool;
+    desc = k_block_descs; 
+  }
+  if (!(size > 0 && size < pool_size)) {
+    return NULL;
+  }
+  struct arena* a;
+  struct mem_block* b;
+  lock_acquire(&mem_pool->lock);
+  if (size > 1024) {
+    uint32_t pg_cnt = DIV_ROUND_UP(size + sizeof(struct arena), PG_SIZE);
+    a = malloc_page(PF, pg_cnt);
+    if (a != NULL) {
+      memset(a, 0, pg_cnt * PG_SIZE);
+      a->desc = NULL;
+      a->cnt = pg_cnt;
+      a->large = true;
+      lock_release(&mem_pool->lock);
+      return (void*)(a + 1);
+    } else {
+      lock_release(&mem_pool->lock);
+      return NULL;
+    }
+  } else {
+    uint8_t desc_index;
+    for (desc_index = 0; desc_index < DESC_CNT; ++desc_index) {
+      if (size <= desc[desc_index].block_size) {
+        break;
+      }
+    }
+    if (list_empty(&desc[desc_index].free_list)) {
+      a = malloc_page(PF, 1);
+      if (a == NULL) {
+        lock_release(&mem_pool->lock);
+        return NULL;
+      }
+      memset(a, 0, PG_SIZE);
+      a->desc = &desc[desc_index];
+      a->large = true;
+      a->cnt = desc[desc_index].blocks_per_arena;
+
+      enum intr_status old_status = intr_disable();
+      for (uint32_t block_index = 0;
+           block_index < desc[desc_index].blocks_per_arena; ++block_index) {
+        b = arena2block(a, block_index);
+        ASSERT(!(elem_find(&desc[desc_index].free_list, &b->free_elem)));
+        list_append(&desc[desc_index].free_list, &b->free_elem);
+      }
+      intr_set_status(old_status);
+    }
+    b = elem2entry(struct mem_block, free_elem,
+                   list_pop(&desc[desc_index].free_list));
+    memset(b, 0, desc[desc_index].block_size);
+    a = block2arena(b);
+    a->cnt--;
+    lock_release(&mem_pool->lock);
+    return (void*)b;
+  }
+}
+
+void pfree(uint32_t pg_phy_addr) {
+  struct pool* mem_pool;
+  uint32_t bit_idx;
+  if (pg_phy_addr >= user_pool.phy_addr_start) {
+    mem_pool = &user_pool;
+    bit_idx = (pg_phy_addr - user_pool.phy_addr_start) / PG_SIZE;
+  } else {
+    mem_pool = &kernel_pool;
+    bit_idx = (pg_phy_addr - kernel_pool.phy_addr_start) / PG_SIZE;
+  }
+  bitmap_set(&mem_pool->pool_bitmap, bit_idx, 0);
+}
+
+static void page_table_pte_remove(uint32_t vaddr) {
+  uint32_t* pte = pte_ptr(vaddr);
+  *pte &= ~PG_P_1;
+  asm volatile("invlpg %0" ::"m"(vaddr) : "memory");
+}
+
+static void vaddr_remove(enum pool_flags pf, void* _vaddr, uint32_t pg_cnt) {
+  uint32_t bit_idx_start = 0, vaddr = (uint32_t)_vaddr, cnt = 0;
+  if (pf == PF_KERNEL) {
+    bit_idx_start = (vaddr - kernel_vaddr.vaddr_start) / PG_SIZE;
+    while (cnt < pg_cnt) {
+      bitmap_set(&kernel_vaddr.vaddr_bitmap, bit_idx_start + cnt++, 0);
+    }
+  } else {
+    struct task_struct* cur_thread = running_thread();
+    bit_idx_start = (vaddr - cur_thread->userprog_vaddr.vaddr_start) / PG_SIZE;
+    while (cnt < pg_cnt) {
+      bitmap_set(&cur_thread->userprog_vaddr.vaddr_bitmap,
+                 bit_idx_start + cnt++, 0);
+    }
+  }
+}
+
+void mfree_page(enum pool_flags pf, void* _vaddr, uint32_t pg_cnt) {
+  uint32_t vaddr = (uint32_t)_vaddr;
+  uint32_t page_cnt = 0;
+  ASSERT(pg_cnt >= 1 && vaddr % PG_SIZE == 0);
+  uint32_t pg_phy_addr = addr_v2p(vaddr);
+  if (pg_phy_addr >= user_pool.phy_addr_start) {
+    vaddr -= PG_SIZE;
+    while (page_cnt < pg_cnt) {
+      vaddr += PG_SIZE;
+      pg_phy_addr = addr_v2p(vaddr);
+      ASSERT((pg_phy_addr % PG_SIZE) == 0 &&
+             pg_phy_addr >= user_pool.phy_addr_start);
+      pfree(pg_phy_addr);
+      page_table_pte_remove(vaddr);
+      page_cnt++;
+    }
+    vaddr_remove(pf, _vaddr, pg_cnt);
+  } else {
+    vaddr -= PG_SIZE;
+    while (page_cnt < pg_cnt) {
+      vaddr += PG_SIZE;
+      pg_phy_addr = addr_v2p(vaddr);
+      ASSERT((pg_phy_addr % PG_SIZE) == 0 &&
+             pg_phy_addr >= kernel_pool.phy_addr_start &&
+             pg_phy_addr < user_pool.phy_addr_start);
+      pfree(pg_phy_addr);
+      page_table_pte_remove(vaddr);
+      page_cnt++;
+    }
+    vaddr_remove(pf, _vaddr, pg_cnt);
+  }
+}
+
+void sys_free(void* ptr){
+  ASSERT(ptr != NULL);
+  if(ptr != NULL){
+    enum pool_flags pf;
+    struct pool* mem_pool;
+    if(running_thread()->pgdir == NULL){
+      mem_pool = &kernel_pool;
+      pf = PF_KERNEL;
+    }else{
+      mem_pool = &user_pool;
+      pf = PF_USER;
+    }
+    lock_acquire(&mem_pool->lock);
+    struct mem_block* b = ptr;
+    struct arena* a = block2arena(b);
+    ASSERT(a->large == 0 || a->large == 1);
+    if(a->desc == NULL && a->large == true){
+      mfree_page(pf, a, a->cnt);
+    }else{
+      list_append(&a->desc->free_list, &b->free_elem);
+      if(++a->cnt == a->desc->blocks_per_arena){
+        for (int block_cnt = 0; block_cnt < a->desc->blocks_per_arena;++block_cnt){
+          b = arena2block(a, block_cnt);
+          ASSERT(elem_find(&a->desc->free_list, &b->free_elem));
+          list_remove(&b->free_elem);
+        }
+        mfree_page(pf, a, 1);
+      }
+    }
+    lock_release(&mem_pool->lock);
+  }
 }
