@@ -14,14 +14,15 @@
 //进行必要的初始化
 void init_all() {
   put_str("init all\n");
-  idt_init();//有关中断额的初始化
+  idt_init();  // 有关中断额的初始化
   mem_init();//初始化内存池
   thread_init();
-  timer_init();//初始化时钟中断的频率
+  timer_init();  // 初始化时钟中断的频率
   console_init();
   keyboard_init();
   tss_init();
   syscall_init();
+  intr_enable();
   ide_init();
   filesys_init();
   put_str("init all done\n");
