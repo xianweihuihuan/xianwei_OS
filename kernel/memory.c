@@ -174,10 +174,12 @@ void* malloc_page(enum pool_flags pf, uint32_t pg_cnt) {
 
 // 获取cnt页的内核内存空间
 void* get_kernel_pages(uint32_t pg_cnt) {
+  lock_acquire(&kernel_pool.lock);
   void* vaddr = malloc_page(PF_KERNEL, pg_cnt);
   if (vaddr != NULL) {
     memset(vaddr, 0, pg_cnt * PG_SIZE);
   }
+  lock_release(&kernel_pool.lock);
   return vaddr;
 }
 
@@ -198,7 +200,7 @@ void* get_a_page(enum pool_flags pf, uint32_t vaddr) {
   int32_t bit_idx = -1;
   if (cur->pgdir != NULL && pf == PF_USER) {
     bit_idx = (vaddr - cur->userprog_vaddr.vaddr_start) / PG_SIZE;
-    ASSERT(bit_idx > 0);
+    ASSERT(bit_idx >= 0);
     bitmap_set(&cur->userprog_vaddr.vaddr_bitmap, bit_idx, 1);
   } else if (cur->pgdir == NULL && pf == PF_KERNEL) {
     bit_idx = (vaddr - kernel_vaddr.vaddr_start) / PG_SIZE;
@@ -210,9 +212,9 @@ void* get_a_page(enum pool_flags pf, uint32_t vaddr) {
         "by get_a_page");
   }
   void* page_phyaddr = palloc(mem_pool);
-  if (page_phyaddr == NULL) {
-    return NULL;
-  }
+  // if (page_phyaddr == NULL) {
+  //   return NULL;
+  // }
   page_table_add((void*)vaddr, page_phyaddr);
   lock_release(&mem_pool->lock);
   return (void*)vaddr;
@@ -269,7 +271,7 @@ void* sys_malloc(uint32_t size) {
     PF = PF_KERNEL;
     pool_size = kernel_pool.phy_size;
     mem_pool = &kernel_pool;
-    desc = k_block_descs; 
+    desc = k_block_descs;
   }
   if (!(size > 0 && size < pool_size)) {
     return NULL;
@@ -397,15 +399,15 @@ void mfree_page(enum pool_flags pf, void* _vaddr, uint32_t pg_cnt) {
   }
 }
 
-void sys_free(void* ptr){
+void sys_free(void* ptr) {
   ASSERT(ptr != NULL);
-  if(ptr != NULL){
+  if (ptr != NULL) {
     enum pool_flags pf;
     struct pool* mem_pool;
-    if(running_thread()->pgdir == NULL){
+    if (running_thread()->pgdir == NULL) {
       mem_pool = &kernel_pool;
       pf = PF_KERNEL;
-    }else{
+    } else {
       mem_pool = &user_pool;
       pf = PF_USER;
     }
@@ -413,12 +415,13 @@ void sys_free(void* ptr){
     struct mem_block* b = ptr;
     struct arena* a = block2arena(b);
     ASSERT(a->large == 0 || a->large == 1);
-    if(a->desc == NULL && a->large == true){
+    if (a->desc == NULL && a->large == true) {
       mfree_page(pf, a, a->cnt);
-    }else{
+    } else {
       list_append(&a->desc->free_list, &b->free_elem);
-      if(++a->cnt == a->desc->blocks_per_arena){
-        for (int block_cnt = 0; block_cnt < a->desc->blocks_per_arena;++block_cnt){
+      if (++a->cnt == a->desc->blocks_per_arena) {
+        for (int block_cnt = 0; block_cnt < a->desc->blocks_per_arena;
+             ++block_cnt) {
           b = arena2block(a, block_cnt);
           ASSERT(elem_find(&a->desc->free_list, &b->free_elem));
           list_remove(&b->free_elem);
@@ -429,3 +432,30 @@ void sys_free(void* ptr){
     lock_release(&mem_pool->lock);
   }
 }
+
+void* get_a_page_without_opvaddrbitmap(enum pool_flags pf, uint32_t vaddr) {
+  struct pool* mem_pool = pf & PF_KERNEL ? &kernel_pool : &user_pool;
+  lock_acquire(&mem_pool->lock);
+  void* page_phyaddr = palloc(mem_pool);
+  if (page_phyaddr == NULL) {
+    lock_release(&mem_pool->lock);
+    return NULL;
+  }
+  page_table_add((void*)vaddr, page_phyaddr);
+  lock_release(&mem_pool->lock);
+  return (void*)vaddr;
+}
+
+void free_a_phy_page(uint32_t pg_phy_addr) {
+  struct pool* mem_pool;
+  uint32_t bit_idx = 0;
+  if (pg_phy_addr >= user_pool.phy_addr_start) {
+    mem_pool = &user_pool;
+    bit_idx = (pg_phy_addr - user_pool.phy_addr_start) / PG_SIZE;
+  } else {
+    mem_pool = &kernel_pool;
+    bit_idx = (pg_phy_addr - kernel_pool.phy_addr_start) / PG_SIZE;
+  }
+  bitmap_set(&mem_pool->pool_bitmap, bit_idx, 0);
+}
+
