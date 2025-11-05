@@ -20,14 +20,21 @@ set(C_SRC
   ${CMAKE_SOURCE_DIR}/thread/thread.c
   ${CMAKE_SOURCE_DIR}/thread/sync.c
   ${CMAKE_SOURCE_DIR}/userprog/tss.c
+  ${CMAKE_SOURCE_DIR}/userprog/exec.c
   ${CMAKE_SOURCE_DIR}/userprog/process.c
+  ${CMAKE_SOURCE_DIR}/userprog/fork.c
+  ${CMAKE_SOURCE_DIR}/userprog/wait_exit.c
   ${CMAKE_SOURCE_DIR}/userprog/syscall-init.c
   ${CMAKE_SOURCE_DIR}/lib/user/syscall.c
+  ${CMAKE_SOURCE_DIR}/lib/user/assert.c
   ${CMAKE_SOURCE_DIR}/lib/stdio.c
   ${CMAKE_SOURCE_DIR}/fs/fs.c
   ${CMAKE_SOURCE_DIR}/fs/dir.c
   ${CMAKE_SOURCE_DIR}/fs/inode.c
   ${CMAKE_SOURCE_DIR}/fs/file.c
+  ${CMAKE_SOURCE_DIR}/shell/shell.c
+  ${CMAKE_SOURCE_DIR}/shell/buildin_cmd.c
+  ${CMAKE_SOURCE_DIR}/shell/pipe.c
 )
 
 foreach(source_file ${C_SRC})
@@ -44,6 +51,7 @@ foreach(source_file ${C_SRC})
     -I${CMAKE_SOURCE_DIR}/thread
     -I${CMAKE_SOURCE_DIR}/userprog
     -I${CMAKE_SOURCE_DIR}/fs
+    -I${CMAKE_SOURCE_DIR}/shell
     -m32 -c -fno-builtin -fno-stack-protector
     ${source_file} -o ${CMAKE_BINARY_DIR}/${obj_name}.o
     DEPENDS ${source_file}
@@ -80,8 +88,8 @@ list(APPEND O_FILE ${CMAKE_BINARY_DIR}/kernel.o)
 add_custom_command(
   OUTPUT kernel.bin
   COMMAND ld -m elf_i386 -Ttext 0xc0001500 -e main -o ${CMAKE_BINARY_DIR}/kernel.bin ${CMAKE_BINARY_DIR}/main.o ${CMAKE_BINARY_DIR}/init.o ${CMAKE_BINARY_DIR}/interrupt.o ${CMAKE_BINARY_DIR}/print.o ${CMAKE_BINARY_DIR}/kernel.o ${CMAKE_BINARY_DIR}/timer.o ${CMAKE_BINARY_DIR}/debug.o ${CMAKE_BINARY_DIR}/memory.o ${CMAKE_BINARY_DIR}/bitmap.o ${CMAKE_BINARY_DIR}/string.o ${CMAKE_BINARY_DIR}/thread.o ${CMAKE_BINARY_DIR}/list.o ${CMAKE_BINARY_DIR}/switch.o ${CMAKE_BINARY_DIR}/sync.o ${CMAKE_BINARY_DIR}/console.o ${CMAKE_BINARY_DIR}/keyboard.o ${CMAKE_BINARY_DIR}/ioqueue.o ${CMAKE_BINARY_DIR}/tss.o ${CMAKE_BINARY_DIR}/process.o ${CMAKE_BINARY_DIR}/syscall-init.o ${CMAKE_BINARY_DIR}/syscall.o
-  ${CMAKE_BINARY_DIR}/stdio.o ${CMAKE_BINARY_DIR}/stdio-kernel.o ${CMAKE_BINARY_DIR}/ide.o ${CMAKE_BINARY_DIR}/fs.o ${CMAKE_BINARY_DIR}/dir.o ${CMAKE_BINARY_DIR}/inode.o ${CMAKE_BINARY_DIR}/file.o
-  DEPENDS ${O_FILE}
+  ${CMAKE_BINARY_DIR}/stdio.o ${CMAKE_BINARY_DIR}/stdio-kernel.o ${CMAKE_BINARY_DIR}/ide.o ${CMAKE_BINARY_DIR}/fs.o ${CMAKE_BINARY_DIR}/dir.o ${CMAKE_BINARY_DIR}/inode.o ${CMAKE_BINARY_DIR}/file.o ${CMAKE_BINARY_DIR}/fork.o ${CMAKE_BINARY_DIR}/shell.o ${CMAKE_BINARY_DIR}/buildin_cmd.o ${CMAKE_BINARY_DIR}/exec.o ${CMAKE_BINARY_DIR}/assert.o ${CMAKE_BINARY_DIR}/wait_exit.o ${CMAKE_BINARY_DIR}/pipe.o
+  DEPENDS ${O_FILE} 
   COMMENT "kernel"
 )
 add_custom_target(kernel ALL DEPENDS ${CMAKE_BINARY_DIR}/kernel.bin)
