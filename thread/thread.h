@@ -6,6 +6,8 @@
 #include "../kernel/memory.h"
 
 #define MAX_FILES_OPEN_PER_PROC 8
+#define TASK_NAME_LEN 16
+
 typedef void thread_func(void*);
 typedef int16_t pid_t;
 
@@ -70,6 +72,9 @@ struct task_struct {
   uint32_t* pgdir;
   struct virtual_addr userprog_vaddr;
   struct mem_block_desc u_block_desc[DESC_CNT];
+  uint32_t cwd_inode_nr;
+  pid_t parent_pid;
+  int8_t exit_status;
   uint32_t stack_magic;
 };
 extern struct list thread_ready_list;
@@ -82,11 +87,15 @@ struct task_struct* thread_start(char* name,
                                  int prio,
                                  thread_func function,
                                  void* func_arg);
-struct task_struct* running_thread();
-void schedule();
-void thread_init();
-static void make_main_thread();
+struct task_struct* running_thread(void);
+void schedule(void);
+void thread_init(void);
 void thread_block(enum task_status stat);
 void thread_unblock(struct task_struct* pthread);
-void thread_yield();
+void thread_yield(void);
+pid_t fork_pid(void);
+void sys_ps(void);
+void thread_exit(struct task_struct* thread_over, bool need_schedule);
+struct task_struct* pid2thread(int32_t pid);
+void release_pid(pid_t pid);
 #endif
