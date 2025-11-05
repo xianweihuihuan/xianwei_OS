@@ -1,11 +1,18 @@
+#include "stdint.h"
+#include "global.h"
 #include "ide.h"
 #include "debug.h"
-#include "interrupt.h"
-#include "io.h"
-#include "stdio-kernel.h"
+#include "sync.h"
 #include "stdio.h"
-#include "string.h"
+#include "stdio-kernel.h"
+#include "interrupt.h"
+#include "memory.h"
+#include "debug.h"
+
+#include "io.h"
 #include "timer.h"
+
+#include "string.h"
 
 #define reg_data(channel) (channel->port_base + 0)
 #define reg_error(channel) (channel->port_base + 1)
@@ -62,6 +69,7 @@ struct boot_sector {
   uint16_t signature;
 } __attribute__((packed));
 
+//因为读取磁盘是以字为单位进行读取，而一个字为两个字节，所以需要下面这个函数
 static void swap_pairs_bytes(const char* dst, char* buf, uint32_t len) {
   uint8_t idx;
   for (idx = 0; idx < len; idx += 2) {
@@ -71,6 +79,7 @@ static void swap_pairs_bytes(const char* dst, char* buf, uint32_t len) {
   buf[idx] = '\0';
 }
 
+//选择磁盘
 static void select_disk(struct disk* hd) {
   uint8_t reg_device = BIT_DEV_MBS | BIT_DEV_LBA;
   if (hd->dev_no == 1) {
@@ -79,6 +88,7 @@ static void select_disk(struct disk* hd) {
   outb(reg_dev(hd->my_channel), reg_device);
 }
 
+//选择读取的起始扇区
 static void select_sector(struct disk* hd, uint32_t lba, uint8_t sec_cnt) {
   ASSERT(lba <= max_lba);
   struct ide_channel* channel = hd->my_channel;
@@ -90,11 +100,13 @@ static void select_sector(struct disk* hd, uint32_t lba, uint8_t sec_cnt) {
                           (hd->dev_no == 1 ? BIT_DEV_DEV : 0) | lba >> 24));
 }
 
+//向磁盘输出要进行的命令
 static void cmd_out(struct ide_channel* channel, uint8_t cmd) {
   channel->expecting_intr = true;
   outb(reg_cmd(channel), cmd);
 }
 
+//从磁盘读取数据
 static void read_from_sector(struct disk* hd, void* buf, uint8_t sec_cnt) {
   uint32_t size_in_byte;
   if (sec_cnt == 0) {
@@ -105,6 +117,7 @@ static void read_from_sector(struct disk* hd, void* buf, uint8_t sec_cnt) {
   insw(reg_data(hd->my_channel), buf, size_in_byte / 2);
 }
 
+//向磁盘写入数据
 static void write2sector(struct disk* hd, void* buf, uint8_t sec_cnt) {
   uint32_t size_in_byte;
   if (sec_cnt == 0) {
@@ -115,6 +128,7 @@ static void write2sector(struct disk* hd, void* buf, uint8_t sec_cnt) {
   outsw(reg_data(hd->my_channel), buf, size_in_byte / 2);
 }
 
+//繁忙等待，如果磁盘准备好了则会返回
 static bool busy_wait(struct disk* hd) {
   struct ide_channel* channel = hd->my_channel;
   uint32_t time_limit = 30 * 1000;
@@ -128,6 +142,7 @@ static bool busy_wait(struct disk* hd) {
   return false;
 }
 
+//从磁盘读取数据
 void ide_read(struct disk* hd, uint32_t lba, void* buf, uint32_t sec_cnt) {
   ASSERT(lba <= max_lba);
   ASSERT(sec_cnt > 0);
@@ -155,6 +170,7 @@ void ide_read(struct disk* hd, uint32_t lba, void* buf, uint32_t sec_cnt) {
   lock_release(&hd->my_channel->lock);
 }
 
+//向磁盘写入数据
 void ide_write(struct disk* hd, uint32_t lba, void* buf, uint32_t sec_cnt) {
   ASSERT(lba <= max_lba);
   ASSERT(sec_cnt > 0);
@@ -194,11 +210,13 @@ void intr_hd_handler(uint8_t irq_no) {
   }
 }
 
+//获取键盘信息
 static void identify_disk(struct disk* hd) {
   char id_info[512];
   select_disk(hd);
   cmd_out(hd->my_channel, CMD_IDENTIFY);
   sema_down(&hd->my_channel->disk_done);
+
   if (!busy_wait(hd)) {
     char error[64];
     sprintf(error, "%s identify failed!!!!!\n", hd->name);
@@ -217,6 +235,7 @@ static void identify_disk(struct disk* hd) {
   printk("      CAPACITY: %dMB\n", sectors * 512 / 1024 / 1024);
 }
 
+//分区扫描，这个函数会被递归调用
 static void partition_scan(struct disk* hd, uint32_t ext_lba) {
   struct boot_sector* bs = sys_malloc(sizeof(struct boot_sector));
   ide_read(hd, ext_lba, bs, 1);
@@ -256,6 +275,7 @@ static void partition_scan(struct disk* hd, uint32_t ext_lba) {
   sys_free(bs);
 }
 
+//打印分区信息
 static bool partition_info(struct list_elem* pelem, int arg UNUSED) {
   struct partition* part = elem2entry(struct partition, part_tag, pelem);
   printk("    %s start_lba: 0x%x, sec_cnt:0x%x\n", part->name, part->start_lba,
@@ -263,16 +283,18 @@ static bool partition_info(struct list_elem* pelem, int arg UNUSED) {
   return false;
 }
 
+//磁盘初始化
 void ide_init() {
   printk("  ide_init start\n");
   uint8_t hd_cnt = *((uint8_t*)(0x475));
   ASSERT(hd_cnt > 0);
   list_init(&partition_list);
   channel_cnt = DIV_ROUND_UP(hd_cnt, 2);
-
+  
   struct ide_channel* channel;
   uint8_t channel_no = 0, dev_no = 0;
   while (channel_no < channel_cnt) {
+    
     channel = &channels[channel_no];
     sprintf(channel->name, "ide%d", channel_no);
     switch (channel_no) {
@@ -286,10 +308,11 @@ void ide_init() {
         break;
     }
     channel->expecting_intr = false;
+    
     lock_init(&channel->lock);
     sema_init(&channel->disk_done, 0);
     register_handler(channel->irq_no, intr_hd_handler);
-    while(dev_no < 2){
+    while (dev_no < 2) {
       struct disk* hd = &channel->devices[dev_no];
       hd->my_channel = channel;
       hd->dev_no = dev_no;
@@ -304,6 +327,7 @@ void ide_init() {
     dev_no = 0;
     channel_no++;
   }
+  
   printk("\n    all partition info\n");
   list_traversal(&partition_list, partition_info, (int)NULL);
   printk("  ide_init done\n");
