@@ -52,7 +52,7 @@ uint32_t* create_page_dir() {
     return NULL;
   }
   memcpy((uint32_t*)((uint32_t)page_dir_vaddr + 0x300 * 4),
-         (uint32_t*)(0xfffff000 + 0x300 * 4), 1024);
+         (uint32_t*)(0xfffff000 + 0x300 * 4), 255 * 4);
   uint32_t new_page_dir_phy_addr = addr_v2p((uint32_t)page_dir_vaddr);
   page_dir_vaddr[1023] = new_page_dir_phy_addr | PG_US_U | PG_RW_W | PG_P_1;
   return page_dir_vaddr;
