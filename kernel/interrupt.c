@@ -48,18 +48,18 @@ extern intr_handler intr_entry_table[IDT_DESC_CNT];
 
 // 初始化可编程中断控制器
 static void pic_init() {
-  //初始化主片
+  // 初始化主片
   outb(PIC_M_CTRL, 0x11);
   outb(PIC_M_DATA, 0x20);
   outb(PIC_M_DATA, 0x04);
   outb(PIC_M_DATA, 0x01);
-  //初始化从片
+  // 初始化从片
   outb(PIC_S_CTRL, 0x11);
   outb(PIC_S_DATA, 0x28);
   outb(PIC_S_DATA, 0x02);
   outb(PIC_S_DATA, 0x01);
 
-  //测试
+  // 测试
   outb(PIC_M_DATA, 0xf8);
   outb(PIC_S_DATA, 0xbf);
   put_str("    pic_init done\n");
@@ -191,6 +191,6 @@ enum intr_status intr_set_status(enum intr_status status) {
   return status & INTR_ON ? intr_enable() : intr_disable();
 }
 
-void register_handler(uint8_t vector_no,intr_handler function){
+void register_handler(uint8_t vector_no, intr_handler function) {
   idt_table[vector_no] = function;
 }
