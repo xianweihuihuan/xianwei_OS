@@ -2,8 +2,8 @@
 #include "global.h"
 #include "interrupt.h"
 #include "io.h"
-#include "print.h"
 #include "ioqueue.h"
+#include "print.h"
 #define KBD_BUF_PORT 0x60
 
 #define esc '\033'  // esc 和 delete都没有\转义字符这种形式，用8进制代替
@@ -149,10 +149,16 @@ static void intr_keyboard_handler() {
     }
     char cur_char = keymap[index][shift];
     if (cur_char) {
-      //put_char(cur_char);
-      ioq_putchar(&kbd_buf, cur_char);
+      if ((ctrl_status && cur_char == 'l') ||
+          (ctrl_status && cur_char == 'u')) {
+        cur_char -= 'a';
+      }
+      if (!ioq_full(&kbd_buf)) {
+        ioq_putchar(&kbd_buf, cur_char);
+      }
       return;
     }
+
     if (scancode == ctrl_l_make || scancode == ctrl_r_make) {
       ctrl_status = true;
       return;
