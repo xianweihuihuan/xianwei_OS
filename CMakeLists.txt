@@ -82,15 +82,52 @@ add_custom_command(
 )
 add_custom_target(switch.s ALL DEPENDS ${CMAKE_BINARY_DIR}/switch.o)
 
+add_custom_command(
+  OUTPUT ${CMAKE_BINARY_DIR}/MBR.bin
+  COMMAND nasm -I${CMAKE_SOURCE_DIR}/boot/include/ -f bin -o ${CMAKE_BINARY_DIR}/MBR.bin ${CMAKE_SOURCE_DIR}/boot/MBR.s
+  DEPENDS ${CMAKE_SOURCE_DIR}/boot/MBR.s ${CMAKE_SOURCE_DIR}/boot/include/boot.inc
+)
+add_custom_target(mbr_bin ALL DEPENDS ${CMAKE_BINARY_DIR}/MBR.bin)
+
+add_custom_command(
+  OUTPUT ${CMAKE_BINARY_DIR}/loader.bin
+  COMMAND nasm -I${CMAKE_SOURCE_DIR}/boot/include/ -f bin -o ${CMAKE_BINARY_DIR}/loader.bin ${CMAKE_SOURCE_DIR}/boot/loader.s
+  DEPENDS ${CMAKE_SOURCE_DIR}/boot/loader.s ${CMAKE_SOURCE_DIR}/boot/include/boot.inc
+)
+add_custom_target(loader_bin ALL DEPENDS ${CMAKE_BINARY_DIR}/loader.bin)
+
 list(APPEND O_FILE ${CMAKE_BINARY_DIR}/print.o)
 list(APPEND O_FILE ${CMAKE_BINARY_DIR}/kernel.o)
+list(APPEND O_FILE ${CMAKE_BINARY_DIR}/switch.o)
 
 add_custom_command(
   OUTPUT kernel.bin
   COMMAND ld -m elf_i386 -Ttext 0xc0001500 -e main -o ${CMAKE_BINARY_DIR}/kernel.bin ${CMAKE_BINARY_DIR}/main.o ${CMAKE_BINARY_DIR}/init.o ${CMAKE_BINARY_DIR}/interrupt.o ${CMAKE_BINARY_DIR}/print.o ${CMAKE_BINARY_DIR}/kernel.o ${CMAKE_BINARY_DIR}/timer.o ${CMAKE_BINARY_DIR}/debug.o ${CMAKE_BINARY_DIR}/memory.o ${CMAKE_BINARY_DIR}/bitmap.o ${CMAKE_BINARY_DIR}/string.o ${CMAKE_BINARY_DIR}/thread.o ${CMAKE_BINARY_DIR}/list.o ${CMAKE_BINARY_DIR}/switch.o ${CMAKE_BINARY_DIR}/sync.o ${CMAKE_BINARY_DIR}/console.o ${CMAKE_BINARY_DIR}/keyboard.o ${CMAKE_BINARY_DIR}/ioqueue.o ${CMAKE_BINARY_DIR}/tss.o ${CMAKE_BINARY_DIR}/process.o ${CMAKE_BINARY_DIR}/syscall-init.o ${CMAKE_BINARY_DIR}/syscall.o
   ${CMAKE_BINARY_DIR}/stdio.o ${CMAKE_BINARY_DIR}/stdio-kernel.o ${CMAKE_BINARY_DIR}/ide.o ${CMAKE_BINARY_DIR}/fs.o ${CMAKE_BINARY_DIR}/dir.o ${CMAKE_BINARY_DIR}/inode.o ${CMAKE_BINARY_DIR}/file.o ${CMAKE_BINARY_DIR}/fork.o ${CMAKE_BINARY_DIR}/shell.o ${CMAKE_BINARY_DIR}/buildin_cmd.o ${CMAKE_BINARY_DIR}/exec.o ${CMAKE_BINARY_DIR}/assert.o ${CMAKE_BINARY_DIR}/wait_exit.o ${CMAKE_BINARY_DIR}/pipe.o
-  DEPENDS ${O_FILE} 
+  DEPENDS ${O_FILE}
   COMMENT "kernel"
 )
 add_custom_target(kernel ALL DEPENDS ${CMAKE_BINARY_DIR}/kernel.bin)
+
+add_custom_target(write_kernel
+  COMMAND dd if=${CMAKE_BINARY_DIR}/kernel.bin of=${CMAKE_SOURCE_DIR}/hd60M.img bs=512 count=200 seek=9 conv=notrunc
+  DEPENDS kernel
+  COMMENT "Writing kernel.bin to hd60M.img"
+)
+
+add_custom_target(write_mbr
+  COMMAND dd if=${CMAKE_BINARY_DIR}/MBR.bin of=${CMAKE_SOURCE_DIR}/hd60M.img bs=512 count=1 conv=notrunc
+  DEPENDS mbr_bin
+  COMMENT "Writing MBR.bin to hd60M.img"
+)
+
+add_custom_target(write_loader
+  COMMAND dd if=${CMAKE_BINARY_DIR}/loader.bin of=${CMAKE_SOURCE_DIR}/hd60M.img bs=512 seek=2 conv=notrunc
+  DEPENDS loader_bin
+  COMMENT "Writing loader.bin to hd60M.img"
+)
+
+add_custom_target(write_image ALL
+  DEPENDS write_mbr write_loader write_kernel
+)
 
